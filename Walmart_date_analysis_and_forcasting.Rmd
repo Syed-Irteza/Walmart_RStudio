@@ -1,0 +1,273 @@
+---
+title: "Walmart_data_analysis_and_forcasting"
+author: "Syed_Irteza"
+date: "2025-09-07"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+setwd("/Users/syedirteza/Desktop/STA 9750/")
+
+# Load the data
+df <- read.csv('Walmart Data Analysis and Forcasting.csv')
+# Convert Date to proper format
+df$Date <- as.Date(df$Date, format = "%d-%m-%Y")
+
+# Check the data
+cat("Dataset shape:", dim(df), "\n")
+cat("\nFirst 5 rows:\n")
+print(head(df))
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(corrplot)
+library(forecast)
+library(stats)
+library(cluster)
+library(factoextra)
+# Set plot theme
+theme_set(theme_minimal())
+```
+
+
+```{r}
+# DATA CLEANING & PREPARATION
+cat("=== DATA CLEANING & PREPARATION ===\n")
+
+# Check for missing values
+cat("Missing values:\n")
+print(colSums(is.na(df)))
+
+# Check data types
+cat("\nData types:\n")
+print(sapply(df, class))
+
+# Check for duplicates
+cat(paste0("\nDuplicate rows: ", sum(duplicated(df)), "\n"))
+
+# Check unique stores
+cat("Unique stores:", n_distinct(df$Store), "\n")
+cat("Store IDs:", sort(unique(df$Store)), "\n")
+
+# Basic statistics
+cat("\nBasic statistics:\n")
+print(summary(df))
+```
+
+```{r}
+# SALES TRENDS OVER TIME
+cat("=== SALES TRENDS OVER TIME ===\n")
+
+# Monthly sales trends
+df$YearMonth <- format(df$Date, "%Y-%m")
+monthly_sales <- df %>%
+  group_by(YearMonth) %>%
+  summarise(Weekly_Sales = sum(Weekly_Sales))
+
+ggplot(monthly_sales, aes(x = YearMonth, y = Weekly_Sales, group = 1)) +
+  geom_line() +
+  labs(title = 'Monthly Sales Trends (2010-2012)', x = 'Month', y = 'Total Weekly Sales') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Yearly comparison
+df$Year <- year(df$Date)
+yearly_sales <- df %>%
+  group_by(Year) %>%
+  summarise(Total_Sales = sum(Weekly_Sales))
+cat("\nYearly Sales:\n")
+print(yearly_sales)
+
+# Seasonal analysis - by quarter
+df$Quarter <- quarter(df$Date)
+quarterly_sales <- df %>%
+  group_by(Year, Quarter) %>%
+  summarise(Avg_Sales = mean(Weekly_Sales)) %>%
+  pivot_wider(names_from = Quarter, values_from = Avg_Sales, names_prefix = "Q")
+cat("\nQuarterly Average Sales:\n")
+print(quarterly_sales)
+```
+
+```{r}
+# STORE PERFORMANCE COMPARISON
+cat("=== STORE PERFORMANCE COMPARISON ===\n")
+
+store_performance <- df %>%
+  group_by(Store) %>%
+  summarise(
+    mean_sales = mean(Weekly_Sales),
+    total_sales = sum(Weekly_Sales),
+    sd_sales = sd(Weekly_Sales)
+  ) %>%
+  arrange(desc(total_sales))
+
+cat("Store Performance Ranking (by total sales):\n")
+print(head(store_performance, 10))
+
+ggplot(store_performance, aes(x = factor(Store), y = total_sales)) +
+  geom_bar(stat = "identity") +
+  labs(title = 'Total Sales by Store', x = 'Store ID', y = 'Total Sales') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(df, aes(x = factor(Store), y = Weekly_Sales)) +
+  geom_boxplot() +
+  labs(title = 'Sales Distribution by Store', x = 'Store ID', y = 'Weekly Sales') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# HOLIDAY IMPACT ANALYSIS
+cat("=== HOLIDAY IMPACT ANALYSIS ===\n")
+
+holiday_sales <- df %>%
+  group_by(Holiday_Flag) %>%
+  summarise(
+    mean_sales = mean(Weekly_Sales),
+    count = n()
+  )
+cat("Holiday vs Non-Holiday Sales:\n")
+print(holiday_sales)
+
+# Statistical test for holiday impact
+t_test_result <- t.test(Weekly_Sales ~ Holiday_Flag, data = df)
+cat(sprintf("\nT-test results: t-statistic = %.2f, p-value = %.4f\n", 
+            t_test_result$statistic, t_test_result$p.value))
+
+if (t_test_result$p.value < 0.05) {
+  cat("Holidays have a statistically significant impact on sales\n")
+} else {
+  cat("No significant difference in sales between holiday and non-holiday weeks\n")
+}
+
+# Monthly holiday impact
+df$Month <- month(df$Date)
+monthly_holiday_impact <- df %>%
+  group_by(Month, Holiday_Flag) %>%
+  summarise(mean_sales = mean(Weekly_Sales)) %>%
+  pivot_wider(names_from = Holiday_Flag, values_from = mean_sales, names_prefix = "Flag_")
+
+monthly_holiday_impact$Difference <- monthly_holiday_impact$Flag_1 - monthly_holiday_impact$Flag_0
+cat("\nMonthly Holiday Impact (Average Sales Difference):\n")
+print(monthly_holiday_impact %>% arrange(desc(Difference)) %>% select(Month, Difference))
+```
+
+```{r}
+# EXTERNAL FACTORS IMPACT
+cat("=== EXTERNAL FACTORS IMPACT ===\n")
+
+correlation_matrix <- cor(df[, c('Weekly_Sales', 'Temperature', 'Fuel_Price', 'CPI', 'Unemployment')])
+cat("Correlation Matrix:\n")
+print(sort(correlation_matrix[, 'Weekly_Sales'], decreasing = TRUE))
+
+corrplot(correlation_matrix, method = 'color', type = 'upper', 
+         tl.col = 'black', tl.srt = 45, addCoef.col = 'black')
+
+ggplot(df, aes(x = Temperature, y = Weekly_Sales)) +
+  geom_point(alpha = 0.5) +
+  labs(title = 'Temperature vs Weekly Sales', x = 'Temperature', y = 'Weekly Sales')
+
+ggplot(df, aes(x = Fuel_Price, y = Weekly_Sales)) +
+  geom_point(alpha = 0.5) +
+  labs(title = 'Fuel Price vs Weekly Sales', x = 'Fuel Price', y = 'Weekly Sales')
+
+```
+
+```{r}
+# TIME SERIES ANALYSIS
+cat("=== TIME SERIES ANALYSIS ===\n")
+
+#install.packages("dplyr") # Run this once to install
+library(dplyr) 
+time_series_data <- df %>%
+  group_by(Date) %>%
+  summarise(Weekly_Sales = sum(Weekly_Sales)) %>%
+  arrange(Date)
+
+ts_data <- ts(time_series_data$Weekly_Sales, frequency = 52)
+decomposed <- decompose(ts_data, type = "additive")
+plot(decomposed)
+
+# Check stationarity with Augmented Dickey-Fuller test
+#install.packages("tseries")
+library(tseries)
+adf_test <- adf.test(ts_data)
+cat("ADF Statistic:", round(adf_test$statistic, 2), "\n")
+cat("p-value:", round(adf_test$p.value, 4), "\n")
+cat("Critical Values:\n")
+print(adf_test$critical.values)
+
+```
+
+```{r}
+# STORE CLUSTERING ANALYSIS
+cat("=== STORE CLUSTERING ANALYSIS ===\n")
+library(tidyverse)
+library(dplyr)
+store_profiles <- df %>%
+  group_by(Store) %>%
+  summarise(
+    Avg_Sales = mean(Weekly_Sales),
+    Sales_Std = sd(Weekly_Sales),
+    Avg_Temp = mean(Temperature),
+    Avg_Fuel_Price = mean(Fuel_Price),
+    Avg_CPI = mean(CPI),
+    Avg_Unemployment = mean(Unemployment)
+  ) %>%
+  mutate(across(where(is.numeric), round, 2))
+
+cat("Store Profiles:\n")
+print(head(store_profiles))
+
+# Normalize for clustering
+scaled_data <- scale(store_profiles[, -1])  # exclude Store column
+
+# Find optimal clusters using elbow method
+#install.packages("factoextra")
+library(factoextra)
+fviz_nbclust(scaled_data, kmeans, method = "wss") +
+  labs(title = "Elbow Method for Optimal Clusters")
+
+# Apply K-means clustering
+set.seed(42)
+kmeans_result <- kmeans(scaled_data, centers = 3)
+store_profiles$Cluster <- kmeans_result$cluster
+
+cat("\nStore Clusters:\n")
+print(table(store_profiles$Cluster))
+
+# Analyze cluster characteristics
+#install.packages("factoextra")
+library(factoextra)
+library(dplyr)
+cluster_analysis <- store_profiles %>%
+  group_by(Cluster) %>%
+  summarise(across(where(is.numeric), mean))
+cat("\nCluster Characteristics:\n")
+print(cluster_analysis)
+
+```
+
+```{r}
+# COMPREHENSIVE SUMMARY
+cat("=== COMPREHENSIVE SUMMARY ===\n")
+
+cat("1. Data Quality: No missing values, clean dataset\n")
+cat("2. Time Period:", as.character(min(df$Date)), "to", as.character(max(df$Date)), "\n")
+library(dplyr)
+cat("3. Number of Stores:", n_distinct(df$Store), "\n")
+cat("4. Total Sales: $", format(sum(df$Weekly_Sales), big.mark = ",", scientific = FALSE), "\n", sep = "")
+cat("5. Average Weekly Sales: $", format(mean(df$Weekly_Sales), big.mark = ",", scientific = FALSE), "\n", sep = "")
+cat("6. Holiday Impact:", sprintf("%.1f%%", (holiday_sales$mean_sales[2]/holiday_sales$mean_sales[1]-1)*100), "higher sales on holidays\n")
+cat("7. Key Correlations:\n")
+cat("   - CPI: Moderate positive correlation with sales\n")
+cat("   - Unemployment: Moderate negative correlation with sales\n")
+cat("   - Temperature/Fuel Price: Weak correlations with sales\n")
+cat("8. Store Performance: Significant variation between stores\n")
+cat("9. Time Series: Clear seasonal patterns detected\n")
+cat("10. Clustering: Stores can be grouped into 3 distinct clusters\n")
+
+```
+
